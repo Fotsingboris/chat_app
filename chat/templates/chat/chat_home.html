@@ -210,6 +210,71 @@
                 max-width: 85%;
             }
         }
+
+        .user-list .list-group-item {
+            position: relative; /* For positioning the active dot and unread badge */
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        
+        .user-list .list-group-item.active-chat {
+            background: #3498db; /* Highlight the active chat */
+            color: #fff;
+        }
+        
+        .active-dot {
+            width: 10px;
+            height: 10px;
+            background: #2ecc71; /* Green dot for active */
+            border-radius: 50%;
+            display: inline-block;
+            margin-left: 10px;
+        }
+        
+        .unread-count {
+            background: #e74c3c; /* Red circle for unread messages */
+            color: #fff;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.8rem;
+            position: absolute;
+            right: 15px;
+        }
+
+
+        .active-dot.green {
+            background: #2ecc71; /* Green for connected */
+        }
+    
+        .active-dot.red {
+            background: #e74c3c; /* Red for disconnected */
+        }
+    
+        .user-list .list-group-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            position: relative;
+        }
+    
+        .unread-count {
+            background: #e74c3c;
+            color: #fff;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.8rem;
+            position: absolute;
+            right: 15px;
+        }
     </style>
 </head>
 <body>
@@ -217,10 +282,12 @@
         <!-- User List -->
         <div class="user-list">
             <h4>Users</h4>
-            <ul class="list-group">
+            <ul class="list-group" id="user-list">
                 {% for user in users %}
-                    <li class="list-group-item" onclick="openChat({{ user.id }}, '{{ user.username }}')">
+                    <li class="list-group-item" data-user-id="{{ user.id }}" onclick="openChat({{ user.id }}, '{{ user.username }}')">
                         {{ user.username }}
+                        <span class="active-dot red" id="active-{{ user.id }}"></span> <!-- Default to red -->
+                        <span class="unread-count" id="unread-{{ user.id }}" style="display: none;">0</span>
                     </li>
                 {% endfor %}
             </ul>
@@ -240,29 +307,60 @@
     <script>
         let ws = null;
         let receiverId = null;
-        const loggedInUsername = "{{ request.user.username }}"; // Pass username from Django
-
+        let unreadMessages = {}; // Track unread messages per user
+        let userStatus = {}; // Track user connection status
+        const loggedInUsername = "{{ request.user.username }}";
+    
+        // Global WebSocket for presence
+        const presenceWs = new WebSocket(`ws://${window.location.host}/ws/presence/`);
+        presenceWs.onopen = function() {
+            console.log("Presence WebSocket connected");
+        };
+        presenceWs.onmessage = function(event) {
+            const data = JSON.parse(event.data);
+            const userId = data.user_id;
+            const isOnline = data.is_online;
+    
+            // Update user status
+            userStatus[userId] = isOnline;
+            const dot = document.getElementById(`active-${userId}`);
+            if (dot) {
+                dot.className = `active-dot ${isOnline ? 'green' : 'red'}`;
+            }
+        };
+    
         function openChat(userId, username) {
+            if (receiverId) {
+                document.querySelector(`[data-user-id="${receiverId}"]`).classList.remove('active-chat');
+            }
+    
             receiverId = userId;
             document.getElementById('chat-box').style.display = 'block';
             document.getElementById('chat-with').innerText = `Chatting with ${username}`;
-            document.getElementById('messages').innerHTML = ''; // Clear previous messages
+            document.getElementById('messages').innerHTML = '';
     
-            // Fetch old messages from the server when chat is opened
-            fetch(`/get_messages/${userId}/`) // Endpoint to fetch old messages for the chat
+            document.querySelector(`[data-user-id="${userId}"]`).classList.add('active-chat');
+    
+            // Reset unread count for this chat
+            unreadMessages[userId] = 0;
+            updateUnreadCount(userId);
+    
+            // Fetch old messages
+            fetch(`/get_messages/${userId}/`)
                 .then(response => response.json())
                 .then(data => {
                     const messagesContainer = document.getElementById('messages');
                     data.messages.forEach(msg => {
                         const msgDiv = document.createElement('div');
                         msgDiv.className = `message ${msg.sender === loggedInUsername ? 'sent' : 'received'}`;
-                        msgDiv.innerHTML = `${msg.content}<span>${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>`;
+                        msgDiv.innerHTML = `${msg.content}<span>${new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>`;
                         messagesContainer.appendChild(msgDiv);
                     });
-                    messagesContainer.scrollTop = messagesContainer.scrollHeight; // Scroll to bottom
+                    messagesContainer.scrollTop = messagesContainer.scrollHeight;
+                    sortChatsByLatestMessage();
                 });
     
-            // Connect WebSocket
+            // Connect chat WebSocket
             if (ws) ws.close();
             ws = new WebSocket(`ws://${window.location.host}/ws/chat/${receiverId}/`);
             ws.onmessage = function(event) {
@@ -272,8 +370,43 @@
                 msgDiv.className = `message ${data.sender === loggedInUsername ? 'sent' : 'received'}`;
                 msgDiv.innerHTML = `${data.message}<span>${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>`;
                 messages.appendChild(msgDiv);
-                messages.scrollTop = messages.scrollHeight; // Scroll to the latest message
+                messages.scrollTop = messages.scrollHeight;
+    
+                const senderId = data.sender_id;
+                if (data.sender !== loggedInUsername && receiverId !== senderId) {
+                    unreadMessages[senderId] = (unreadMessages[senderId] || 0) + 1;
+                    updateUnreadCount(senderId);
+                    sortChatsByLatestMessage();
+                } else if (receiverId === senderId) {
+                    unreadMessages[userId] = 0;
+                    updateUnreadCount(userId);
+                }
             };
+        }
+    
+        function updateUnreadCount(userId) {
+            const unreadElement = document.getElementById(`unread-${userId}`);
+            const count = unreadMessages[userId] || 0;
+            unreadElement.textContent = count;
+            unreadElement.style.display = count > 0 ? 'flex' : 'none';
+        }
+    
+        function sortChatsByLatestMessage() {
+            const userList = document.getElementById('user-list');
+            const users = Array.from(userList.getElementsByClassName('list-group-item'));
+    
+            users.sort((a, b) => {
+                const aId = a.dataset.userId;
+                const bId = b.dataset.userId;
+                const aUnread = unreadMessages[aId] || 0;
+                const bUnread = unreadMessages[bId] || 0;
+    
+                // Sort by unread count first, then by user ID (or timestamp if available)
+                if (aUnread !== bUnread) return bUnread - aUnread;
+                return bId - aId; // Fallback to user ID for consistent ordering
+            });
+    
+            users.forEach(user => userList.appendChild(user));
         }
     
         function sendMessage() {
@@ -284,7 +417,8 @@
                     'message': message,
                     'receiver_id': receiverId
                 }));
-                messageInput.value = ''; // Clear the input field
+                messageInput.value = '';
+                sortChatsByLatestMessage(); // Move current chat to top after sending
             }
         }
     

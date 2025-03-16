@@ -34,7 +34,6 @@ class ChatConsumer(AsyncWebsocketConsumer):
 
         await self.save_message(sender, receiver, message)
 
-        # Use the same symmetric room name
         user_ids = sorted([str(sender.id), str(receiver.id)])
         room_name = f"chat_{user_ids[0]}_{user_ids[1]}"
         await self.channel_layer.group_send(
@@ -43,6 +42,8 @@ class ChatConsumer(AsyncWebsocketConsumer):
                 'type': 'chat_message',
                 'message': message,
                 'sender': sender.username,
+                'sender_id': str(sender.id),  # Add sender ID
+                'receiver_id': receiver_id
             }
         )
 
@@ -50,6 +51,8 @@ class ChatConsumer(AsyncWebsocketConsumer):
         await self.send(text_data=json.dumps({
             'message': event['message'],
             'sender': event['sender'],
+            'sender_id': event['sender_id'],
+            'receiver_id': event['receiver_id']
         }))
 
     # Rest of the methods remain unchanged
@@ -75,3 +78,38 @@ class ChatConsumer(AsyncWebsocketConsumer):
         ).order_by('timestamp')
 
         return [{'sender': msg.sender.username, 'content': msg.content} for msg in messages]
+
+
+
+class PresenceConsumer(AsyncWebsocketConsumer):
+    async def connect(self):
+        self.user = self.scope['user']
+        await self.channel_layer.group_add("presence", self.channel_name)
+        await self.accept()
+        # Notify others this user is online
+        await self.channel_layer.group_send(
+            "presence",
+            {
+                "type": "user_status",
+                "user_id": str(self.user.id),
+                "is_online": True
+            }
+        )
+
+    async def disconnect(self, close_code):
+        await self.channel_layer.group_discard("presence", self.channel_name)
+        # Notify others this user is offline
+        await self.channel_layer.group_send(
+            "presence",
+            {
+                "type": "user_status",
+                "user_id": str(self.user.id),
+                "is_online": False
+            }
+        )
+
+    async def user_status(self, event):
+        await self.send(text_data=json.dumps({
+            "user_id": event["user_id"],
+            "is_online": event["is_online"]
+        }))

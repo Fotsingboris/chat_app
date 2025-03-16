@@ -60,7 +60,7 @@ def get_chat_messages(request, receiver_id):
             'sender': msg.sender.username,
             'receiver': msg.receiver.username,
             'content': msg.content,
-            'timestamp': msg.timestamp.isoformat()
+            'timestamp': msg.timestamp.isoformat()  # Include timestamp for sorting
         } for msg in messages]
 
         return JsonResponse({'messages': messages_data})
