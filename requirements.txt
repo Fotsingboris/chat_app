@@ -1,0 +1,7 @@
+channels-redis==4.2.1
+daphne==4.1.2
+pip-chill==1.0.3
+pyopenssl==25.0.0
+python-decouple==3.8
+service-identity==24.2.0
+zope.interface==7.2

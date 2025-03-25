@@ -281,7 +281,7 @@
     <div class="chat-container">
         <!-- User List -->
         <div class="user-list">
-            <h4>Users</h4>
+            <h4>Users - ( {{ request.user.username }}  )</h4>
             <ul class="list-group" id="user-list">
                 {% for user in users %}
                     <li class="list-group-item" data-user-id="{{ user.id }}" onclick="openChat({{ user.id }}, '{{ user.username }}')">
